@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="家計簿">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>家計簿</title>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-side"><button id="backBtn" class="back" type="button" hidden>‹ 戻る</button></div>
+  <h1 id="title">家計簿</h1>
+  <div class="topbar-side"></div>
+</header>
+
+<main>
+  <!-- ================= ホーム ================= -->
+  <section id="screen-home" class="screen">
+    <div class="card month-card">
+      <div class="month-card-head" id="homeMonth"></div>
+      <div class="summary3">
+        <div><span>収入</span><strong id="hInc" class="pos"></strong></div>
+        <div><span>支出</span><strong id="hExp" class="neg"></strong></div>
+        <div><span>収支</span><strong id="hBal"></strong></div>
+      </div>
+    </div>
+
+    <nav class="menu-grid">
+      <a class="menu-tile" href="#/expense" style="--c: var(--expense)">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+        <span class="menu-name">支出入力</span>
+      </a>
+      <a class="menu-tile" href="#/income" style="--c: var(--income)">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
+        <span class="menu-name">収入入力</span>
+      </a>
+      <a class="menu-tile" href="#/graph" style="--c: var(--accent)">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg></span>
+        <span class="menu-name">グラフ表示</span>
+      </a>
+      <a class="menu-tile" href="#/settings" style="--c: var(--sub)">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></span>
+        <span class="menu-name">管理画面</span>
+      </a>
+    </nav>
+
+    <h2 class="section-title">最近の記録</h2>
+    <div id="recentList"></div>
+  </section>
+
+  <!-- ================= 支出・収入入力 ================= -->
+  <section id="screen-entry" class="screen" hidden>
+    <form id="entryForm" autocomplete="off">
+      <div class="group">
+        <label class="field"><span id="dateLabel">日付</span><input type="date" id="fDate" required></label>
+        <label class="field" id="majorField"><span>大分類</span><select id="fMajor"></select></label>
+        <label class="field" id="minorField"><span>小分類</span><select id="fMinor"></select></label>
+        <label class="field"><span>金額</span>
+          <span class="amount-wrap"><span class="yen-mark">¥</span><input id="fAmount" inputmode="numeric" placeholder="0" enterkeyhint="next"></span>
+        </label>
+        <label class="field"><span>備考</span><input type="text" id="fMemo" maxlength="100" placeholder="任意" enterkeyhint="done"></label>
+      </div>
+      <button type="submit" class="btn primary big" id="saveBtn">記録する</button>
+      <button type="button" class="btn danger-text" id="deleteBtn" hidden>この記録を削除</button>
+    </form>
+    <div id="entryRecentWrap">
+      <h2 class="section-title" id="entryRecentTitle"></h2>
+      <div id="entryRecent"></div>
+    </div>
+  </section>
+
+  <!-- ================= グラフ ================= -->
+  <section id="screen-graph" class="screen" hidden>
+    <div class="seg seg3" id="graphTab">
+      <button type="button" data-v="expense">支出</button>
+      <button type="button" data-v="income">収入</button>
+      <button type="button" data-v="saving">貯金額</button>
+    </div>
+    <div class="seg seg4 small" id="granSeg">
+      <button type="button" data-v="d">日別</button>
+      <button type="button" data-v="w">週別</button>
+      <button type="button" data-v="m">月別</button>
+      <button type="button" data-v="y">年別</button>
+    </div>
+    <div class="period-nav">
+      <button type="button" id="pPrev" aria-label="前の期間">‹</button>
+      <span id="pLabel"></span>
+      <button type="button" id="pNext" aria-label="次の期間">›</button>
+    </div>
+    <div class="card summary3 pad">
+      <div><span>収入</span><strong id="gInc" class="pos"></strong></div>
+      <div><span>支出</span><strong id="gExp" class="neg"></strong></div>
+      <div><span>収支</span><strong id="gBal"></strong></div>
+    </div>
+    <div id="graphBody"></div>
+  </section>
+
+  <!-- ================= 管理画面 ================= -->
+  <section id="screen-settings" class="screen" hidden>
+    <div class="panel">
+      <h3>既定値（支出入力を開いたときの初期選択）</h3>
+      <div class="group flat">
+        <label class="field"><span>大分類</span><select id="defMajor"></select></label>
+        <label class="field"><span>小分類</span><select id="defMinor"></select></label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>大分類・小分類の選択肢</h3>
+      <div id="catEditor"></div>
+      <form id="majorAdd" class="cat-add">
+        <input class="input" id="majorName" maxlength="12" placeholder="大分類を追加" autocomplete="off">
+        <button class="btn small" type="submit">追加</button>
+      </form>
+      <p class="note">大分類をタップすると小分類を編集できます。分類を削除しても、記録済みのデータの分類名はそのまま残ります。名前を変更すると過去の記録にも反映されます。</p>
+    </div>
+
+    <div class="panel">
+      <h3>バックアップ</h3>
+      <p class="note" id="countInfo"></p>
+      <p class="note" id="lastBackup"></p>
+      <button class="btn primary" id="exportBtn" type="button">CSVで書き出す</button>
+      <label class="btn" for="importFile">CSVを読み込む</label>
+      <input type="file" id="importFile" class="visually-hidden" accept=".csv,text/csv">
+      <p class="note">データはこのiPhoneの中だけに保存されています。定期的に書き出して「ファイル」アプリやiCloud Driveに保存してください。読み込み時、同じ記録は重複して追加されません。</p>
+    </div>
+
+    <div class="panel">
+      <h3>データ</h3>
+      <button class="btn danger-text" id="wipeBtn" type="button">すべての記録を削除</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
