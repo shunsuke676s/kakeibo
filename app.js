@@ -93,13 +93,21 @@ function loadState() {
   if (!d.defaults) d.defaults = { major: '', minor: '' };
   if (!Array.isArray(d.cards)) d.cards = [];
   if (!Array.isArray(d.bills)) d.bills = [];
+  if (!Array.isArray(d.fixed)) d.fixed = [];
+  d.fixed.forEach((f) => { if (!Array.isArray(f.done)) f.done = []; });
   return d;
 }
 let state = loadState();
 
 function saveState() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }
-  catch (e) { toast('保存できませんでした'); return false; }
+  catch (e) {
+    // 保存できなかった変更は取り消し、最後に保存できた状態に戻す
+    state = loadState();
+    ensureDefaults();
+    toast('保存できませんでした（空き容量を確認してください）');
+    return false;
+  }
 }
 const findMajor = (name) => state.majors.find((m) => m.name === name);
 function ensureDefaults() {
@@ -125,19 +133,21 @@ function route() {
   let screen = 'home', title = '家計簿';
   if (name === 'expense' || name === 'income') {
     screen = 'entry';
-    title = openEntry(name, null);
+    title = openEntry(name, null, /^\d{4}-\d{2}-\d{2}$/.test(arg || '') ? arg : null);
   } else if (name === 'edit') {
     const e = state.entries.find((x) => x.id === decodeURIComponent(arg || ''));
     if (e) { screen = 'entry'; title = openEntry(e.type, e); }
   } else if (name === 'graph') { screen = 'graph'; title = 'グラフ'; }
   else if (name === 'settings') { screen = 'settings'; title = '管理画面'; }
   else if (name === 'card') { screen = 'card'; title = 'カード引き落とし'; }
+  else if (name === 'fixed') { screen = 'fixed'; title = '固定費'; openFixedForm(null); }
+  else if (name === 'calendar') { screen = 'calendar'; title = 'カレンダー'; }
 
   currentScreen = screen;
-  for (const s of ['home', 'entry', 'graph', 'settings', 'card']) $('#screen-' + s).hidden = s !== screen;
+  for (const s of ['home', 'entry', 'graph', 'settings', 'card', 'fixed', 'calendar']) $('#screen-' + s).hidden = s !== screen;
   $('#title').textContent = title;
   $('#backBtn').hidden = screen === 'home';
-  $('#backBtn').textContent = name === 'edit' ? '‹ 戻る' : '‹ ホーム';
+  $('#backBtn').textContent = backToPrev(name, arg) ? '‹ 戻る' : '‹ ホーム';
   renderCurrent();
   window.scrollTo(0, 0);
 }
@@ -148,11 +158,16 @@ function renderCurrent() {
   else if (currentScreen === 'settings') renderSettings();
   else if (currentScreen === 'entry') renderEntryRecent();
   else if (currentScreen === 'card') renderCard();
+  else if (currentScreen === 'fixed') renderFixed();
+  else if (currentScreen === 'calendar') renderCalendar();
 }
 
+// 編集画面・日付指定の入力画面からは、元の画面（グラフやカレンダーなど）へ戻る
+const backToPrev = (name, arg) => name === 'edit' || ((name === 'expense' || name === 'income') && !!arg);
+
 function goBack() {
-  const [name] = location.hash.replace(/^#\/?/, '').split('/');
-  location.hash = name === 'edit' && prevHash && !prevHash.startsWith('#/edit') ? prevHash : '#/';
+  const [name, arg] = location.hash.replace(/^#\/?/, '').split('/');
+  location.hash = backToPrev(name, arg) && prevHash && !prevHash.startsWith('#/edit') && prevHash !== location.hash ? prevHash : '#/';
 }
 
 /* ================= 明細リスト（共通） ================= */
@@ -161,7 +176,8 @@ function rowHTML(e) {
   const badge = inc
     ? '<span class="badge income">収入</span>'
     : `<span class="badge" style="--c:${majorColor(e.major)}">${esc(e.major)}</span>`;
-  const text = inc ? esc(e.memo || '') : [e.minor, e.memo].filter(Boolean).map(esc).join('<small>・</small>');
+  const text = (e.fixedId ? '<span class="tag-fixed">固定</span>' : '')
+    + (inc ? esc(e.memo || '') : [e.minor, e.memo].filter(Boolean).map(esc).join('<small>・</small>'));
   return `<a class="row" href="#/edit/${encodeURIComponent(e.id)}">${badge}<span class="row-text">${text}</span>
     <span class="amt ${inc ? 'pos' : 'neg'}">${inc ? '+' : '-'}${yen(e.amount)}</span></a>`;
 }
@@ -193,6 +209,8 @@ function renderHome() {
   $('#hExp').textContent = yen(t.exp);
   setSigned($('#hBal'), t.bal);
   const due = state.bills.filter((b) => b.month === key).reduce((s, b) => s + b.amount, 0);
+  $('#hFixed').hidden = !state.fixed.length;
+  $('#hFixed').innerHTML = `<span>固定費（月額・${state.fixed.length}件）</span><strong>${yen(fixedTotal())}</strong>`;
   $('#hCard').hidden = !state.cards.length;
   $('#hCard').innerHTML = `<span>今月のカード引き落とし</span><strong>${yen(due)}</strong>`;
   const recent = [...state.entries]
@@ -205,7 +223,7 @@ function renderHome() {
 let entryMode = 'expense';
 let editing = null;
 
-function openEntry(mode, e) {
+function openEntry(mode, e, presetDate) {
   entryMode = mode;
   editing = e;
   const isExp = mode === 'expense';
@@ -213,7 +231,7 @@ function openEntry(mode, e) {
   $('#majorField').hidden = !isExp;
   $('#minorField').hidden = !isExp;
   $('#dateLabel').textContent = isExp ? '日付' : '収入日';
-  $('#fDate').value = e ? e.date : todayStr();
+  $('#fDate').value = e ? e.date : presetDate || todayStr();
   $('#fAmount').value = e ? fmtNum(e.amount) : '';
   $('#fMemo').value = e ? e.memo || '' : '';
   if (isExp) {
@@ -230,17 +248,17 @@ function openEntry(mode, e) {
 function optionsHTML(names) {
   return names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
 }
-function fillMajor(selected) {
+function fillMajor(selected, el = '#fMajor') {
   const names = state.majors.map((m) => m.name);
   if (selected && !names.includes(selected)) names.push(selected); // 削除済み分類の記録を編集する場合
-  $('#fMajor').innerHTML = optionsHTML(names);
-  $('#fMajor').value = selected || names[0];
+  $(el).innerHTML = optionsHTML(names);
+  $(el).value = selected || names[0];
 }
-function fillMinor(major, selected) {
+function fillMinor(major, selected, el = '#fMinor') {
   const m = findMajor(major);
   const names = m ? m.minors.slice() : [];
   if (selected && !names.includes(selected)) names.push(selected);
-  const sel = $('#fMinor');
+  const sel = $(el);
   sel.innerHTML = names.length ? optionsHTML(names) : '<option value="">（なし）</option>';
   sel.value = selected || names[0] || '';
 }
@@ -587,6 +605,112 @@ function historyHTML(card, m) {
     <table><thead><tr><th>引落月</th><th>引き落とし</th><th>期間の支出</th><th>差額</th></tr></thead><tbody>${rows}</tbody></table></details>`;
 }
 
+/* ================= 固定費 ================= */
+let fxEditing = null;
+const fixedTotal = () => state.fixed.reduce((s, f) => s + f.amount, 0);
+
+// 支払日を迎えた固定費を支出として記録する（同じ月は一度だけ）
+function runFixed() {
+  const today = todayStr(), now = new Date();
+  let added = 0;
+  for (const f of state.fixed) {
+    if (!/^\d{4}-\d{2}$/.test(f.start || '')) continue;
+    let y = +f.start.slice(0, 4), m = +f.start.slice(5, 7) - 1;
+    for (let guard = 0; guard < 600 && (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth())); guard++) {
+      const key = `${y}-${pad(m + 1)}`;
+      const date = ds(dayOf(y, m, f.payDay));
+      if (date <= today && !f.done.includes(key)) {
+        state.entries.push({
+          id: uid(), createdAt: Date.now(), type: 'expense', amount: f.amount, date,
+          major: f.major || '', minor: f.minor || '', memo: f.name, fixedId: f.id,
+        });
+        f.done.push(key);
+        added++;
+      }
+      if (++m > 11) { m = 0; y++; }
+    }
+  }
+  if (added && !saveState()) return 0;
+  return added;
+}
+
+function renderFixed() {
+  $('#fxTotal').textContent = yen(fixedTotal());
+  const list = [...state.fixed].sort((a, b) => a.payDay - b.payDay);
+  $('#fixedList').innerHTML = list.length
+    ? `<div class="card">${list.map((f) => `
+        <button type="button" class="row fx-row${fxEditing && fxEditing.id === f.id ? ' editing' : ''}" data-id="${esc(f.id)}">
+          <span class="fx-main"><span class="fx-name">${esc(f.name)}</span>
+            <span class="fx-sub">毎月${dayLabel(f.payDay)}・${esc([f.major, f.minor].filter(Boolean).join(' / ') || '分類なし')}・${+f.start.slice(0, 4)}年${+f.start.slice(5, 7)}月から</span></span>
+          <span class="amt neg">${yen(f.amount)}</span>
+        </button>`).join('')}</div>`
+    : '<p class="empty">まだ固定費は登録されていません。</p>';
+}
+
+function openFixedForm(f) {
+  fxEditing = f || null;
+  $('#xDay').innerHTML = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">毎月${dayLabel(i + 1)}</option>`).join('');
+  $('#xName').value = f ? f.name : '';
+  $('#xAmount').value = f ? fmtNum(f.amount) : '';
+  $('#xDay').value = String(f ? f.payDay : 27);
+  const major = f ? f.major : state.defaults.major;
+  fillMajor(major, '#xMajor');
+  fillMinor(major, f ? f.minor : (major === state.defaults.major ? state.defaults.minor : null), '#xMinor');
+  $('#xStart').value = f ? f.start : ymKey(new Date());
+  $('#fxFormTitle').textContent = f ? `「${f.name}」を編集` : '固定費を登録';
+  $('#xSave').textContent = f ? '更新する' : '登録する';
+  $('#xCancel').hidden = !f;
+  $('#xDelete').hidden = !f;
+}
+
+/* ================= カレンダー ================= */
+const cal = { month: new Date(new Date().getFullYear(), new Date().getMonth(), 1), sel: null };
+
+function calShort(v) {
+  if (v < 1e5) return fmtNum(v);
+  if (v < 1e8) return +(v / 1e4).toFixed(v < 1e6 ? 1 : 0) + '万';
+  return +(v / 1e8).toFixed(1) + '億';
+}
+
+function renderCalendar() {
+  const y = cal.month.getFullYear(), m = cal.month.getMonth();
+  const key = ymKey(cal.month), today = todayStr();
+  $('#calLabel').textContent = `${y}年${m + 1}月`;
+  const exps = state.entries.filter((e) => e.type === 'expense' && e.date.slice(0, 7) === key);
+  const byDay = new Map();
+  exps.forEach((e) => byDay.set(e.date, (byDay.get(e.date) || 0) + e.amount));
+  const total = exps.reduce((s, e) => s + e.amount, 0);
+  const max = Math.max(1, ...byDay.values());
+  const days = daysIn(y, m);
+  const elapsed = today.slice(0, 7) === key ? +today.slice(8) : today < key ? 0 : days;
+  $('#calSum').innerHTML = `
+    <div><span>支出合計</span><strong class="neg">${yen(total)}</strong></div>
+    <div><span>支出があった日</span><strong>${byDay.size}日</strong></div>
+    <div><span>1日あたり</span><strong>${elapsed ? yen(total / elapsed) : '—'}</strong></div>`;
+
+  if (!cal.sel || cal.sel.slice(0, 7) !== key) cal.sel = today.slice(0, 7) === key ? today : null;
+  const first = new Date(y, m, 1).getDay();
+  let html = '<span class="cal-cell blank"></span>'.repeat(first);
+  for (let d = 1; d <= days; d++) {
+    const date = `${key}-${pad(d)}`, v = byDay.get(date) || 0, dow = (first + d - 1) % 7;
+    const cls = ['cal-cell', dow === 0 ? 'sun' : dow === 6 ? 'sat' : '', date === today ? 'today' : '', date === cal.sel ? 'sel' : ''].filter(Boolean).join(' ');
+    html += `<button type="button" class="${cls}" data-date="${date}" style="--bgp:${v ? Math.round(8 + (v / max) * 27) : 0}%">
+      <span class="cal-d">${d}</span><span class="cal-v">${v ? calShort(v) : ''}</span></button>`;
+  }
+  html += '<span class="cal-cell blank"></span>'.repeat((7 - ((first + days) % 7)) % 7);
+  $('#calGrid').innerHTML = html;
+
+  if (cal.sel) {
+    const dd = pd(cal.sel);
+    const items = exps.filter((e) => e.date === cal.sel);
+    $('#calDay').innerHTML = `<div class="cal-day-head"><h2>${dd.getMonth() + 1}月${dd.getDate()}日(${WEEK[dd.getDay()]})の支出</h2><strong>${yen(byDay.get(cal.sel) || 0)}</strong></div>
+      ${items.length ? `<div class="card">${items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(rowHTML).join('')}</div>` : '<p class="empty">この日の支出はありません。</p>'}
+      <a class="btn primary" href="#/expense/${cal.sel}">この日の支出を追加</a>`;
+  } else {
+    $('#calDay').innerHTML = '<p class="empty">日付をタップすると、その日の支出を表示します。</p>';
+  }
+}
+
 /* ================= 管理画面 ================= */
 const openMajors = new Set();
 const openCards = new Set();
@@ -597,6 +721,7 @@ function dayOptions() {
   return h;
 }
 function renderCardEditor() {
+  syncOpenState();
   $('#cardEditor').innerHTML = state.cards.map((c) => `
     <details class="cat-major" data-card="${esc(c.id)}" ${openCards.has(c.id) ? 'open' : ''}>
       <summary>
@@ -622,7 +747,18 @@ function renderCardEditor() {
   });
 }
 
+// 再描画の前に、画面上で開いているパネルを記録しておく（toggleイベントは非同期のため）
+function syncOpenState() {
+  document.querySelectorAll('#catEditor details.cat-major').forEach((d) => {
+    if (d.open) openMajors.add(d.dataset.name); else openMajors.delete(d.dataset.name);
+  });
+  document.querySelectorAll('#cardEditor details').forEach((d) => {
+    if (d.open) openCards.add(d.dataset.card); else openCards.delete(d.dataset.card);
+  });
+}
+
 function renderSettings() {
+  syncOpenState();
   ensureDefaults();
   $('#defMajor').innerHTML = optionsHTML(state.majors.map((m) => m.name));
   $('#defMajor').value = state.defaults.major;
@@ -739,6 +875,22 @@ async function exportCSV() {
   toast('書き出しました');
 }
 
+// 日付セル → [全体, 年, 月, 日]（存在しない日付は null）
+function parseDateCell(v) {
+  const m = toHalfDigits(v).replace(/[\/.]/g, '-').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) return null;
+  return m;
+}
+// 金額セル → 正の整数（小数は四捨五入、マイナスや数値でないものは 0）
+function parseAmountCell(v) {
+  const t = toHalfDigits(v).replace(/[,，¥￥円\s]/g, '').replace(/[．]/g, '.');
+  if (!/^\d+(\.\d+)?$/.test(t)) return 0;
+  const n = Math.round(parseFloat(t));
+  return n > 0 && n < 1e10 ? n : 0;
+}
+
 async function importCSV(file) {
   const rows = parseCSV(await file.text()).filter((r) => r.some((c) => c.trim() !== ''));
   if (rows.length < 2) { toast('データが見つかりませんでした'); return; }
@@ -753,8 +905,8 @@ async function importCSV(file) {
   let added = 0, skipped = 0;
   for (const r of rows.slice(1)) {
     const get = (i) => (i >= 0 ? (r[i] || '').trim() : '');
-    const m = get(iDate).replace(/\//g, '-').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    const amount = parseInt(toHalfDigits(get(iAmt)).replace(/[^\d]/g, ''), 10);
+    const m = parseDateCell(get(iDate));
+    const amount = parseAmountCell(get(iAmt));
     if (!m || !amount) { skipped++; continue; }
     const id = get(iId) || uid();
     if (ids.has(id)) { skipped++; continue; }
@@ -827,7 +979,7 @@ $('#entryForm').addEventListener('submit', (e) => {
   };
   if (editing) {
     Object.assign(editing, data);
-    if (!saveState()) return;
+    if (!saveState()) { editing = state.entries.find((x) => x.id === editing.id) || null; return; }
     toast('更新しました');
     goBack();
   } else {
@@ -842,8 +994,8 @@ $('#entryForm').addEventListener('submit', (e) => {
 });
 $('#deleteBtn').addEventListener('click', () => {
   if (!editing || !confirm('この記録を削除しますか？')) return;
-  state.entries = state.entries.filter((x) => x !== editing);
-  saveState();
+  state.entries = state.entries.filter((x) => x.id !== editing.id);
+  if (!saveState()) return;
   toast('削除しました');
   goBack();
 });
@@ -858,6 +1010,10 @@ $('#graphTab').addEventListener('click', (e) => {
 $('#granSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-v]');
   if (!b) return;
+  // 表示中の期間に今日が含まれていれば、切り替え後も今日を基準にする
+  const [a, z] = pRange(pStart(graph.anchor, graph.gran), graph.gran);
+  const t = todayStr();
+  if (t >= a && t < z) graph.anchor = new Date();
   graph.gran = b.dataset.v;
   renderGraph();
 });
@@ -1044,9 +1200,67 @@ $('#cardEditor').addEventListener('click', (e) => {
   saveState(); renderSettings();
 });
 
+// 固定費
+$('#xMajor').addEventListener('change', (e) => {
+  const major = e.target.value;
+  fillMinor(major, major === state.defaults.major ? state.defaults.minor : null, '#xMinor');
+});
+$('#fixedForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = $('#xName').value.trim();
+  const amount = parseInt($('#xAmount').value.replace(/[^\d]/g, ''), 10);
+  if (!name) { toast('内容を入力してください'); return; }
+  if (!amount || amount <= 0) { toast('金額を入力してください'); return; }
+  const start = /^\d{4}-\d{2}$/.test($('#xStart').value) ? $('#xStart').value : ymKey(new Date());
+  const data = { name, amount, payDay: Number($('#xDay').value) || 1, major: $('#xMajor').value, minor: $('#xMinor').value, start };
+  const wasEditing = !!fxEditing;
+  if (fxEditing) Object.assign(fxEditing, data);
+  else state.fixed.push({ id: uid(), done: [], ...data });
+  if (!saveState()) { openFixedForm(null); renderFixed(); return; }
+  const n = runFixed();
+  openFixedForm(null);
+  renderFixed();
+  toast((wasEditing ? '更新しました' : '登録しました') + (n ? `（${n}件を支出に記録）` : ''));
+});
+$('#fixedList').addEventListener('click', (e) => {
+  const r = e.target.closest('.fx-row');
+  if (!r) return;
+  openFixedForm(state.fixed.find((f) => f.id === r.dataset.id));
+  renderFixed();
+  window.scrollTo(0, 0);
+});
+$('#xCancel').addEventListener('click', () => { openFixedForm(null); renderFixed(); });
+$('#xDelete').addEventListener('click', () => {
+  if (!fxEditing || !confirm(`「${fxEditing.name}」を削除しますか？\n（記録済みの支出は残ります）`)) return;
+  const id = fxEditing.id;
+  state.fixed = state.fixed.filter((f) => f.id !== id);
+  if (!saveState()) return;
+  openFixedForm(null);
+  renderFixed();
+  toast('削除しました');
+});
+
+// カレンダー
+$('#calPrev').addEventListener('click', () => { cal.month = new Date(cal.month.getFullYear(), cal.month.getMonth() - 1, 1); renderCalendar(); });
+$('#calNext').addEventListener('click', () => { cal.month = new Date(cal.month.getFullYear(), cal.month.getMonth() + 1, 1); renderCalendar(); });
+$('#calGrid').addEventListener('click', (e) => {
+  const c = e.target.closest('.cal-cell[data-date]');
+  if (!c) return;
+  cal.sel = c.dataset.date;
+  renderCalendar();
+});
+
+// アプリを開き直したとき・日付が変わったときに固定費を記録
+function checkFixed() {
+  const n = runFixed();
+  if (n) { renderCurrent(); toast(`固定費を${n}件、支出に記録しました`); }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkFixed(); });
+
 /* ================= 起動 ================= */
 ensureDefaults();
 route();
+checkFixed();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));

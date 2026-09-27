@@ -33,6 +33,7 @@
         <div><span>支出</span><strong id="hExp" class="neg"></strong></div>
         <div><span>収支</span><strong id="hBal"></strong></div>
       </div>
+      <div class="card-due" id="hFixed" hidden></div>
       <div class="card-due" id="hCard" hidden></div>
     </div>
 
@@ -45,17 +46,25 @@
         <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></span>
         <span class="menu-name">収入入力</span>
       </a>
+      <a class="menu-tile" href="#/calendar" style="--c: #ec4899">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
+        <span class="menu-name">カレンダー</span>
+      </a>
       <a class="menu-tile" href="#/graph" style="--c: var(--accent)">
         <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg></span>
         <span class="menu-name">グラフ表示</span>
       </a>
-      <a class="menu-tile" href="#/settings" style="--c: var(--sub)">
-        <span class="menu-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></span>
-        <span class="menu-name">管理画面</span>
+      <a class="menu-tile" href="#/fixed" style="--c: #8b5cf6">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18.5" cy="17" r="2.5"/></svg></span>
+        <span class="menu-name">固定費登録</span>
       </a>
-      <a class="menu-tile wide" href="#/card" style="--c: #a16207">
+      <a class="menu-tile" href="#/card" style="--c: #a16207">
         <span class="menu-ico"><svg viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg></span>
-        <span class="menu-name">カード引き落とし<span class="menu-sub">引き落とし額を入力して支出と比較</span></span>
+        <span class="menu-name">カード引き落とし</span>
+      </a>
+      <a class="menu-tile wide" href="#/settings" style="--c: var(--sub)">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></span>
+        <span class="menu-name">管理画面<span class="menu-sub">分類・既定値・カード・バックアップ</span></span>
       </a>
     </nav>
 
@@ -108,6 +117,49 @@
       <div><span>収支</span><strong id="gBal"></strong></div>
     </div>
     <div id="graphBody"></div>
+  </section>
+
+  <!-- ================= 固定費 ================= -->
+  <section id="screen-fixed" class="screen" hidden>
+    <div class="card pad">
+      <div class="stats">
+        <div class="stat wide"><span>固定費の合計（月額）</span><strong id="fxTotal"></strong></div>
+      </div>
+    </div>
+    <h2 class="section-title" id="fxFormTitle">固定費を登録</h2>
+    <form id="fixedForm" autocomplete="off">
+      <div class="group">
+        <label class="field"><span>内容</span><input type="text" id="xName" maxlength="30" placeholder="例：家賃"></label>
+        <label class="field"><span>金額</span>
+          <span class="amount-wrap"><span class="yen-mark">¥</span><input id="xAmount" class="num-input" inputmode="numeric" placeholder="0"></span>
+        </label>
+        <label class="field"><span>支払日</span><select id="xDay"></select></label>
+        <label class="field"><span>大分類</span><select id="xMajor"></select></label>
+        <label class="field"><span>小分類</span><select id="xMinor"></select></label>
+        <label class="field"><span>開始月</span><input type="month" id="xStart"></label>
+      </div>
+      <button type="submit" class="btn primary big" id="xSave">登録する</button>
+      <button type="button" class="btn" id="xCancel" hidden>編集をやめる</button>
+      <button type="button" class="btn danger-text" id="xDelete" hidden>この固定費を削除</button>
+    </form>
+    <h2 class="section-title">登録済みの固定費</h2>
+    <div id="fixedList"></div>
+    <p class="note">毎月の支払日になると、その月の支出として自動で記録されます（備考には内容が入ります）。金額を変えると次回の記録から反映されます。固定費を削除しても、記録済みの支出は残ります。</p>
+  </section>
+
+  <!-- ================= カレンダー ================= -->
+  <section id="screen-calendar" class="screen" hidden>
+    <div class="period-nav">
+      <button type="button" id="calPrev" aria-label="前の月">‹</button>
+      <span id="calLabel"></span>
+      <button type="button" id="calNext" aria-label="次の月">›</button>
+    </div>
+    <div class="card pad summary3" id="calSum"></div>
+    <div class="card cal">
+      <div class="cal-head"><span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span></div>
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+    <div id="calDay"></div>
   </section>
 
   <!-- ================= カード引き落とし ================= -->
