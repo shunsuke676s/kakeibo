@@ -91,6 +91,8 @@ function loadState() {
   if (!Array.isArray(d.majors) || !d.majors.length) d.majors = clone(DEFAULT_MAJORS);
   d.majors.forEach((m) => { if (!Array.isArray(m.minors)) m.minors = []; });
   if (!d.defaults) d.defaults = { major: '', minor: '' };
+  if (!Array.isArray(d.cards)) d.cards = [];
+  if (!Array.isArray(d.bills)) d.bills = [];
   return d;
 }
 let state = loadState();
@@ -129,9 +131,10 @@ function route() {
     if (e) { screen = 'entry'; title = openEntry(e.type, e); }
   } else if (name === 'graph') { screen = 'graph'; title = 'グラフ'; }
   else if (name === 'settings') { screen = 'settings'; title = '管理画面'; }
+  else if (name === 'card') { screen = 'card'; title = 'カード引き落とし'; }
 
   currentScreen = screen;
-  for (const s of ['home', 'entry', 'graph', 'settings']) $('#screen-' + s).hidden = s !== screen;
+  for (const s of ['home', 'entry', 'graph', 'settings', 'card']) $('#screen-' + s).hidden = s !== screen;
   $('#title').textContent = title;
   $('#backBtn').hidden = screen === 'home';
   $('#backBtn').textContent = name === 'edit' ? '‹ 戻る' : '‹ ホーム';
@@ -144,6 +147,7 @@ function renderCurrent() {
   else if (currentScreen === 'graph') renderGraph();
   else if (currentScreen === 'settings') renderSettings();
   else if (currentScreen === 'entry') renderEntryRecent();
+  else if (currentScreen === 'card') renderCard();
 }
 
 function goBack() {
@@ -188,6 +192,9 @@ function renderHome() {
   $('#hInc').textContent = yen(t.inc);
   $('#hExp').textContent = yen(t.exp);
   setSigned($('#hBal'), t.bal);
+  const due = state.bills.filter((b) => b.month === key).reduce((s, b) => s + b.amount, 0);
+  $('#hCard').hidden = !state.cards.length;
+  $('#hCard').innerHTML = `<span>今月のカード引き落とし</span><strong>${yen(due)}</strong>`;
   const recent = [...state.entries]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .slice(0, 10);
@@ -496,8 +503,124 @@ function savingView(list, t, range) {
 
 function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#2563eb'; }
 
+/* ================= カード引き落とし ================= */
+const cardView = { month: new Date(new Date().getFullYear(), new Date().getMonth(), 1) };
+const daysIn = (y, m) => new Date(y, m + 1, 0).getDate();
+const dayOf = (y, m, day) => { const f = new Date(y, m, 1); return new Date(f.getFullYear(), f.getMonth(), Math.min(day, daysIn(f.getFullYear(), f.getMonth()))); };
+const ymKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const dayLabel = (n) => (n >= 31 ? '末日' : `${n}日`);
+const md = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+const newCard = (name) => ({ id: uid(), name, closeDay: 31, payOffset: 1, payDay: 27 });
+const findBill = (cardId, month) => state.bills.find((b) => b.cardId === cardId && b.month === month);
+const payDate = (card, bm) => dayOf(bm.getFullYear(), bm.getMonth(), card.payDay);
+
+// 引き落とし月 bm に対応する利用期間（前回の締め日の翌日〜今回の締め日）
+function usagePeriod(card, bm) {
+  const cy = bm.getFullYear(), cm = bm.getMonth() - card.payOffset;
+  const end = dayOf(cy, cm, card.closeDay);
+  const prev = dayOf(cy, cm - 1, card.closeDay);
+  const start = new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1);
+  const next = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+  return { start, end, range: [ds(start), ds(next)] };
+}
+function cardCompare(card, bm) {
+  const p = usagePeriod(card, bm);
+  return { ...p, spent: totals(inRange(state.entries, p.range)).exp, bill: findBill(card.id, ymKey(bm)) };
+}
+
+function renderCard() {
+  const m = cardView.month;
+  $('#cLabel').textContent = `${m.getFullYear()}年${m.getMonth() + 1}月 引き落とし`;
+  const el = $('#cardBody');
+  if (!state.cards.length) {
+    el.innerHTML = '<p class="empty">カードが登録されていません。<br><a class="link" href="#/settings">管理画面</a>でカードを登録してください。</p>';
+    return;
+  }
+  const key = ymKey(m);
+  const total = state.bills.filter((b) => b.month === key).reduce((s, b) => s + b.amount, 0);
+  let html = `<div class="card pad"><div class="stats"><div class="stat wide"><span>この月の引き落とし合計</span><strong>${yen(total)}</strong></div></div></div>`;
+  for (const c of state.cards) {
+    const r = cardCompare(c, m);
+    const amt = r.bill ? r.bill.amount : null;
+    html += `<div class="panel">
+      <div class="cb-head"><strong>${esc(c.name)}</strong><span>引き落とし日 ${md(payDate(c, m))}</span></div>
+      <p class="cb-period">利用期間 ${md(r.start)}〜${md(r.end)}（${dayLabel(c.closeDay)}締め）</p>
+      <form class="cb-form" data-card="${esc(c.id)}">
+        <span class="yen-mark">¥</span>
+        <input class="input num-input" inputmode="numeric" placeholder="引き落とし額を入力" value="${amt != null ? fmtNum(amt) : ''}">
+        <button class="btn small primary" type="submit">保存</button>
+      </form>
+      ${compareHTML(amt, r.spent)}
+      ${historyHTML(c, m)}
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function compareHTML(bill, spent) {
+  const max = Math.max(1, bill || 0, spent);
+  const bar = (label, v, cls) => `<div class="cmp-row"><span class="cmp-label">${label}</span>
+    <span class="cmp-track"><i class="${cls}" style="width:${((v || 0) / max) * 100}%"></i></span>
+    <span class="cmp-val">${v == null ? '未入力' : yen(v)}</span></div>`;
+  let html = `<div class="cmp">${bar('引き落とし', bill, 'b-bill')}${bar('期間の支出', spent, 'b-spent')}`;
+  if (bill != null) {
+    const diff = bill - spent;
+    const msg = diff > 0 ? '引き落とし額の方が多くなっています。支出の記録漏れがないか確認しましょう。'
+      : diff < 0 ? '支出の方が多くなっています（現金など、カード以外で払った分）。'
+      : '支出と一致しています。';
+    html += `<div class="cmp-diff"><span>差額（引き落とし − 支出）</span><strong class="${diff > 0 ? 'neg' : ''}">${signedYen(diff)}</strong></div><p class="note">${msg}</p>`;
+  }
+  return html + '</div>';
+}
+
+function historyHTML(card, m) {
+  let rows = '';
+  for (let i = 5; i >= 0; i--) {
+    const bm = new Date(m.getFullYear(), m.getMonth() - i, 1);
+    const r = cardCompare(card, bm);
+    const b = r.bill ? r.bill.amount : null;
+    rows += `<tr><td>${bm.getFullYear() !== m.getFullYear() ? String(bm.getFullYear()).slice(2) + '/' : ''}${bm.getMonth() + 1}月</td>
+      <td>${b == null ? '—' : yen(b)}</td><td>${yen(r.spent)}</td>
+      <td class="${b != null && b > r.spent ? 'neg' : ''}">${b == null ? '—' : signedYen(b - r.spent)}</td></tr>`;
+  }
+  return `<details class="cb-hist"><summary>過去6か月の比較<span class="chev"></span></summary>
+    <table><thead><tr><th>引落月</th><th>引き落とし</th><th>期間の支出</th><th>差額</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+}
+
 /* ================= 管理画面 ================= */
 const openMajors = new Set();
+const openCards = new Set();
+
+function dayOptions() {
+  let h = '';
+  for (let i = 1; i <= 31; i++) h += `<option value="${i}">${dayLabel(i)}</option>`;
+  return h;
+}
+function renderCardEditor() {
+  $('#cardEditor').innerHTML = state.cards.map((c) => `
+    <details class="cat-major" data-card="${esc(c.id)}" ${openCards.has(c.id) ? 'open' : ''}>
+      <summary>
+        <span class="cm-name">${esc(c.name)}</span>
+        <span class="cm-count">${dayLabel(c.closeDay)}締め・${c.payOffset === 2 ? '翌々月' : '翌月'}${dayLabel(c.payDay)}払い</span>
+        <span class="chev"></span>
+      </summary>
+      <div class="cm-body">
+        <div class="group flat">
+          <label class="field"><span>締め日</span><select data-field="closeDay">${dayOptions()}</select></label>
+          <label class="field"><span>引き落とし月</span><select data-field="payOffset"><option value="1">翌月</option><option value="2">翌々月</option></select></label>
+          <label class="field"><span>引き落とし日</span><select data-field="payDay">${dayOptions()}</select></label>
+        </div>
+        <div class="cm-actions">
+          <button type="button" data-cact="rename">名前を変更</button>
+          <button type="button" class="del" data-cact="del">カードを削除</button>
+        </div>
+      </div>
+    </details>`).join('') || '<p class="note">カードはまだ登録されていません。</p>';
+  document.querySelectorAll('#cardEditor details').forEach((d) => {
+    const c = state.cards.find((x) => x.id === d.dataset.card);
+    d.querySelectorAll('select[data-field]').forEach((s) => { s.value = String(c[s.dataset.field]); });
+  });
+}
 
 function renderSettings() {
   ensureDefaults();
@@ -535,7 +658,8 @@ function renderSettings() {
       </div>
     </details>`).join('');
 
-  $('#countInfo').textContent = `記録件数：${state.entries.length}件`;
+  renderCardEditor();
+  $('#countInfo').textContent = `記録件数：${state.entries.length}件（カード引き落とし ${state.bills.length}件）`;
   $('#lastBackup').textContent = state.lastBackup
     ? `最終バックアップ：${new Date(state.lastBackup).toLocaleString('ja-JP')}`
     : 'まだバックアップしていません';
@@ -562,10 +686,16 @@ function csvCell(v) {
   return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function toCSV() {
-  const rows = [['日付', '区分', '大分類', '小分類', '金額', '備考', 'ID']];
-  [...state.entries]
+  const body = [...state.entries]
     .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0))
-    .forEach((e) => rows.push([e.date, e.type === 'income' ? '収入' : '支出', e.major || '', e.minor || '', e.amount, e.memo || '', e.id]));
+    .map((e) => [e.date, e.type === 'income' ? '収入' : '支出', e.major || '', e.minor || '', e.amount, e.memo || '', e.id]);
+  for (const b of state.bills) {
+    const c = state.cards.find((x) => x.id === b.cardId);
+    const [y, m] = b.month.split('-').map(Number);
+    body.push([ds(dayOf(y, m - 1, c ? c.payDay : 27)), 'カード引落', c ? c.name : 'カード', '', b.amount, '', b.id]);
+  }
+  body.sort((a, b) => a[0].localeCompare(b[0]));
+  const rows = [['日付', '区分', '大分類', '小分類', '金額', '備考', 'ID'], ...body];
   return '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n'); // BOM付きでExcelでも文字化けしない
 }
 function parseCSV(text) {
@@ -619,7 +749,7 @@ async function importCSV(file) {
   if (iDate < 0 || iAmt < 0) { toast('この家計簿の形式のCSVではありません'); return; }
   if (!confirm(`${rows.length - 1}行のデータを読み込みます。よろしいですか？`)) return;
 
-  const ids = new Set(state.entries.map((e) => e.id));
+  const ids = new Set([...state.entries.map((e) => e.id), ...state.bills.map((b) => b.id)]);
   let added = 0, skipped = 0;
   for (const r of rows.slice(1)) {
     const get = (i) => (i >= 0 ? (r[i] || '').trim() : '');
@@ -628,6 +758,17 @@ async function importCSV(file) {
     if (!m || !amount) { skipped++; continue; }
     const id = get(iId) || uid();
     if (ids.has(id)) { skipped++; continue; }
+    if (get(iType) === 'カード引落') {
+      const cname = get(iMajor) || 'カード';
+      let card = state.cards.find((c) => c.name === cname);
+      if (!card) { card = newCard(cname); state.cards.push(card); }
+      const month = `${m[1]}-${pad(m[2])}`;
+      if (findBill(card.id, month)) { skipped++; continue; }
+      state.bills.push({ id, cardId: card.id, month, amount });
+      ids.add(id);
+      added++;
+      continue;
+    }
     const inc = get(iType) === '収入';
     let major = '', minor = '';
     if (!inc) {
@@ -823,12 +964,84 @@ $('#importFile').addEventListener('change', async (e) => {
   if (f) { try { await importCSV(f); } catch (err) { toast('読み込みに失敗しました'); } }
 });
 $('#wipeBtn').addEventListener('click', () => {
-  if (!state.entries.length) { toast('記録はありません'); return; }
+  if (!state.entries.length && !state.bills.length) { toast('記録はありません'); return; }
   if (!confirm('すべての記録を削除します。元に戻せません。\n先にCSVで書き出しておくことをおすすめします。\n削除しますか？')) return;
   state.entries = [];
+  state.bills = [];
   saveState();
   renderSettings();
   toast('すべて削除しました');
+});
+
+// カード引き落とし
+$('#cPrev').addEventListener('click', () => { const m = cardView.month; cardView.month = new Date(m.getFullYear(), m.getMonth() - 1, 1); renderCard(); });
+$('#cNext').addEventListener('click', () => { const m = cardView.month; cardView.month = new Date(m.getFullYear(), m.getMonth() + 1, 1); renderCard(); });
+document.addEventListener('input', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('num-input')) return;
+  const digits = toHalfDigits(e.target.value).replace(/[^\d]/g, '').slice(0, 10);
+  e.target.value = digits ? Number(digits).toLocaleString('ja-JP') : '';
+});
+$('#cardBody').addEventListener('submit', (e) => {
+  const f = e.target.closest('form.cb-form');
+  if (!f) return;
+  e.preventDefault();
+  const key = ymKey(cardView.month);
+  const amount = parseInt(f.querySelector('input').value.replace(/[^\d]/g, ''), 10);
+  const ex = findBill(f.dataset.card, key);
+  if (!amount) {
+    if (ex && confirm('この月の引き落とし額を削除しますか？')) {
+      state.bills = state.bills.filter((b) => b !== ex);
+      saveState(); renderCard(); toast('削除しました');
+    } else if (!ex) toast('金額を入力してください');
+    return;
+  }
+  if (ex) ex.amount = amount;
+  else state.bills.push({ id: uid(), cardId: f.dataset.card, month: key, amount });
+  if (document.activeElement) document.activeElement.blur();
+  saveState(); renderCard(); toast('保存しました');
+});
+
+// 管理画面：カード
+$('#cardAdd').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = $('#cardName').value.trim();
+  if (!name) return;
+  if (state.cards.some((c) => c.name === name)) { toast('同じ名前があります'); return; }
+  const c = newCard(name);
+  state.cards.push(c);
+  openCards.add(c.id);
+  $('#cardName').value = '';
+  saveState(); renderSettings();
+  toast(`「${name}」を追加しました`);
+});
+$('#cardEditor').addEventListener('toggle', (e) => {
+  const d = e.target;
+  if (!d.dataset || !d.dataset.card) return;
+  if (d.open) openCards.add(d.dataset.card); else openCards.delete(d.dataset.card);
+}, true);
+$('#cardEditor').addEventListener('change', (e) => {
+  const s = e.target.closest('select[data-field]');
+  if (!s) return;
+  const c = state.cards.find((x) => x.id === s.closest('details').dataset.card);
+  if (!c) return;
+  c[s.dataset.field] = Number(s.value);
+  saveState(); renderCardEditor();
+});
+$('#cardEditor').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-cact]');
+  if (!b) return;
+  const c = state.cards.find((x) => x.id === b.closest('details').dataset.card);
+  if (!c) return;
+  if (b.dataset.cact === 'rename') {
+    const name = askName('カードの新しい名前', c.name, state.cards.map((x) => x.name));
+    if (!name || name === c.name) return;
+    c.name = name;
+  } else {
+    if (!confirm(`「${c.name}」を削除しますか？\nこのカードの引き落とし記録も削除されます。`)) return;
+    state.cards = state.cards.filter((x) => x !== c);
+    state.bills = state.bills.filter((x) => x.cardId !== c.id);
+  }
+  saveState(); renderSettings();
 });
 
 /* ================= 起動 ================= */

@@ -33,6 +33,7 @@
         <div><span>支出</span><strong id="hExp" class="neg"></strong></div>
         <div><span>収支</span><strong id="hBal"></strong></div>
       </div>
+      <div class="card-due" id="hCard" hidden></div>
     </div>
 
     <nav class="menu-grid">
@@ -51,6 +52,10 @@
       <a class="menu-tile" href="#/settings" style="--c: var(--sub)">
         <span class="menu-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></span>
         <span class="menu-name">管理画面</span>
+      </a>
+      <a class="menu-tile wide" href="#/card" style="--c: #a16207">
+        <span class="menu-ico"><svg viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg></span>
+        <span class="menu-name">カード引き落とし<span class="menu-sub">引き落とし額を入力して支出と比較</span></span>
       </a>
     </nav>
 
@@ -105,6 +110,16 @@
     <div id="graphBody"></div>
   </section>
 
+  <!-- ================= カード引き落とし ================= -->
+  <section id="screen-card" class="screen" hidden>
+    <div class="period-nav">
+      <button type="button" id="cPrev" aria-label="前の月">‹</button>
+      <span id="cLabel"></span>
+      <button type="button" id="cNext" aria-label="次の月">›</button>
+    </div>
+    <div id="cardBody"></div>
+  </section>
+
   <!-- ================= 管理画面 ================= -->
   <section id="screen-settings" class="screen" hidden>
     <div class="panel">
@@ -123,6 +138,16 @@
         <button class="btn small" type="submit">追加</button>
       </form>
       <p class="note">大分類をタップすると小分類を編集できます。分類を削除しても、記録済みのデータの分類名はそのまま残ります。名前を変更すると過去の記録にも反映されます。</p>
+    </div>
+
+    <div class="panel">
+      <h3>クレジットカード</h3>
+      <div id="cardEditor"></div>
+      <form id="cardAdd" class="cat-add">
+        <input class="input" id="cardName" maxlength="16" placeholder="カード名を追加" autocomplete="off">
+        <button class="btn small" type="submit">追加</button>
+      </form>
+      <p class="note">カードをタップすると締め日と引き落とし日を設定できます。</p>
     </div>
 
     <div class="panel">
