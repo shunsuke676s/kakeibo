@@ -1,6 +1,6 @@
 // オフライン対応用のService Worker
 // キャッシュ済みの画面をすぐ表示し、裏で最新版を取得して次回起動時に反映する
-const CACHE = 'kakeibo-v5';
+const CACHE = 'kakeibo-v6';
 const ASSETS = [
   './',
   './index.html',

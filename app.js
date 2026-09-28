@@ -122,12 +122,12 @@ function majorColor(name) {
 
 /* ================= 画面遷移 ================= */
 let currentScreen = 'home';
-let prevHash = '#/';
-let lastHash = location.hash || '#/';
+const TAB_SCREENS = ['home', 'calendar', 'graph'];
+// 画面の履歴（タブの画面に来たらリセット）。「戻る」で1つ前の画面に戻る
+let navStack = [];
 
 function route() {
-  const hash = location.hash || '#/';
-  if (hash !== lastHash) { prevHash = lastHash; lastHash = hash; }
+  const hash = location.hash && location.hash !== '#' ? location.hash : '#/';
   const [name, arg] = hash.replace(/^#\/?/, '').split('/');
 
   let screen = 'home', title = '家計簿';
@@ -143,13 +143,22 @@ function route() {
   else if (name === 'fixed') { screen = 'fixed'; title = '固定費'; openFixedForm(null); }
   else if (name === 'calendar') { screen = 'calendar'; title = 'カレンダー'; }
 
+  const isTab = TAB_SCREENS.includes(screen);
+  if (isTab) navStack = [screen === 'home' ? '#/' : hash];
+  else if (navStack.length >= 2 && navStack[navStack.length - 2] === hash) navStack.pop();
+  else if (navStack[navStack.length - 1] !== hash) navStack.push(hash);
+
+  const changed = currentScreen !== screen;
   currentScreen = screen;
   for (const s of ['home', 'entry', 'graph', 'settings', 'card', 'fixed', 'calendar']) $('#screen-' + s).hidden = s !== screen;
   $('#title').textContent = title;
-  $('#backBtn').hidden = screen === 'home';
-  $('#backBtn').textContent = backToPrev(name, arg) ? '‹ 戻る' : '‹ ホーム';
+  $('#backBtn').hidden = isTab;
+  $('#tabbar').hidden = !isTab;
+  document.body.classList.toggle('has-tabbar', isTab);
+  document.querySelectorAll('#tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === screen));
+  $('#gearBtn').classList.toggle('active', screen === 'settings');
   renderCurrent();
-  window.scrollTo(0, 0);
+  if (changed || !isTab) window.scrollTo(0, 0);
 }
 
 function renderCurrent() {
@@ -162,12 +171,8 @@ function renderCurrent() {
   else if (currentScreen === 'calendar') renderCalendar();
 }
 
-// 編集画面・日付指定の入力画面からは、元の画面（グラフやカレンダーなど）へ戻る
-const backToPrev = (name, arg) => name === 'edit' || ((name === 'expense' || name === 'income') && !!arg);
-
 function goBack() {
-  const [name, arg] = location.hash.replace(/^#\/?/, '').split('/');
-  location.hash = backToPrev(name, arg) && prevHash && !prevHash.startsWith('#/edit') && prevHash !== location.hash ? prevHash : '#/';
+  location.hash = navStack.length >= 2 ? navStack[navStack.length - 2] : '#/';
 }
 
 /* ================= 明細リスト（共通） ================= */
@@ -956,6 +961,12 @@ function toast(msg) {
 /* ================= イベント ================= */
 window.addEventListener('hashchange', route);
 $('#backBtn').addEventListener('click', goBack);
+$('#gearBtn').addEventListener('click', (e) => { if (currentScreen === 'settings') e.preventDefault(); });
+// 表示中のタブをもう一度押したら先頭までスクロール
+$('#tabbar').addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-tab]');
+  if (a && a.dataset.tab === currentScreen) { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+});
 
 // 入力画面
 $('#fMajor').addEventListener('change', (e) => {
